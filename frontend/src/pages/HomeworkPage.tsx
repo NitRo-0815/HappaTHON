@@ -1,15 +1,21 @@
-import { useState } from 'react'
-import { HOMEWORK_LIST } from '../constants/dummyHomework'
+import { useEffect, useState } from 'react'
 import { HomeworkCard } from '../components/HomeworkCard'
 import { AddHomeworkModal } from '../components/AddHomeworkModal'
 import type { HomeworkItem } from '../types/homework'
 import { sortByDeadline } from '../utils/sortByDeadline'
+import { useServerData } from '../context/serverData'
 import '../styles/HomeworkPage.css'
 
-// 左画面：宿題リスト
+// 左画面：宿題リスト（同期データ、未同期時はダミーにフォールバック）
 export function HomeworkPage() {
-  const [homeworkList, setHomeworkList] = useState<HomeworkItem[]>(HOMEWORK_LIST)
+  const { homeworkList: serverHomework } = useServerData()
+  const [homeworkList, setHomeworkList] = useState<HomeworkItem[]>(serverHomework)
   const [isModalOpen, setIsModalOpen] = useState(false)
+
+  // 同期などでサーバー側のリストが更新されたら再シードする
+  useEffect(() => {
+    setHomeworkList(serverHomework)
+  }, [serverHomework])
 
   function handleAdd(homework: HomeworkItem) {
     setHomeworkList((current) => [...current, homework])
