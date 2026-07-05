@@ -3,6 +3,7 @@ import { getAssistantMessage } from '../services/itemService'
 import { useAgentInput } from '../hooks/useAgentInput'
 import { AgentPanel } from '../components/AgentPanel'
 import { ChatPanel } from '../components/ChatPanel'
+import { useServerData } from '../context/serverData'
 import type { ChatMessage } from '../types/chatMessage'
 import '../styles/HomePage.css'
 
@@ -17,6 +18,7 @@ export function HomePage() {
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE])
   const [isSending, setIsSending] = useState(false)
 
+  const { classItems, homeworkList } = useServerData()
   const {
     type,
     effectiveType,
@@ -28,7 +30,7 @@ export function HomePage() {
     selectSuggestion,
     openSuggestions,
     clearQuery,
-  } = useAgentInput()
+  } = useAgentInput(classItems, homeworkList)
 
   async function handleSend() {
     if (isSending) return

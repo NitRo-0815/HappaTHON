@@ -1,9 +1,11 @@
 import { WEEKDAYS } from '../types/timetable'
-import { TIMETABLE_ROWS } from '../constants/timetable'
+import { useServerData } from '../context/serverData'
 import '../styles/TimetablePage.css'
 
-// 右画面：週の時間割
+// 右画面：週の時間割（同期データ、未同期時はダミーにフォールバック）
 export function TimetablePage() {
+  const { timetableRows } = useServerData()
+
   return (
     <div className="timetable-page">
       <h1 className="screen-title">時間割</h1>
@@ -18,7 +20,7 @@ export function TimetablePage() {
             </tr>
           </thead>
           <tbody>
-            {TIMETABLE_ROWS.map((row) => (
+            {timetableRows.map((row) => (
               <tr key={row.period}>
                 <th scope="row">{row.period}</th>
                 {row.subjects.map((subject, i) => (

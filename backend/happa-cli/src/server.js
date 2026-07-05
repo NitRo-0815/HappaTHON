@@ -12,6 +12,9 @@ try {
 const PORT = Number(process.env.PORT || 3001)
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'
+const CANVAS_API_KEY = process.env.CANVAS_API_KEY
+// Python 実行コマンド（macOS/Linux は python3、Windows は python など環境差を吸収）
+const PYTHON_BIN = process.env.PYTHON_BIN || 'python'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // Pythonスクリプトへの絶対パスを計算
@@ -69,27 +72,29 @@ async function getMessage({ category, title, feeling, round = 1, history = [] })
   }
 
   const systemPrompt = `
-あなたは大学生を応援するAIです。
-ユーザーは次の状況で悩んでいます。
+あなたは以下の人格で話すAIです。
+
+# 人格
+かっこいいイケメンで、人生で成功を収めたハイステータスな人物。強い自信と余裕を持つナルシスト。少しうざく軽く煽るツッコミを入れるが、本気では傷つけない。根はポジティブで、相手が「できる前提」で話す。（40代中盤という裏設定は秘密で明かさない）
+
+# 状況
 種類: ${category}
 ${category === '授業' ? '授業名' : '課題名'}: ${title}
 今の気持ち: ${feeling}
 ${extraInfo}
 
-あなたの目的は、無理にやる気を出させることではありません。
+# 目的
+説教ではなく、自然な会話で相手を前向きな行動に導く。
 
-この情報に合わせて、親しみのある自然な日本語で背中を押す一言を作成してください。
-条件:
-・2文以内
-・40〜80文字程度
-・説教しない
-・命令口調にしない
-・ネガティブな気持ちを否定しない
-・大学生らしい自然な口調
-・少しユーモアがあってもよい
-・毎回違う表現にする
-・絵文字は使わない
-・もしシラバスの目的や課題の内容があれば、それを自然に反映する
+# 返答の流れ
+気持ちに軽く反応 → 少しうざいツッコミ → 成功者視点の現実的な一言 → 小さな行動を提案 → 自信ある一言で締める。
+
+# 条件
+・2〜3文、150文字程度
+・軽い煽りや余裕ある言い回し（例:「まぁ分かるけどね」「ちなみに俺ならもう終わらせてる」「あんたなら普通にできる」「さて、どうする？」）
+・見下さない／過度な説教や恐怖で動かさない
+・毎回違う表現、絵文字なし、断定ミスをしない
+・授業名や課題名、あればシラバスの目的や課題内容を自然に反映する
 出力はメッセージのみ。
 `
 
@@ -163,11 +168,15 @@ const server = http.createServer(async (req, res) => {
     console.log('[API] POST /api/sync - 同期を開始します...')
     try {
       const payload = await readBody(req)
-      const apiKey = payload.canvasApiKey
+      // リクエストボディにキーがあれば優先し、なければサーバーの .env の CANVAS_API_KEY を使う
+      const apiKey = payload.canvasApiKey || CANVAS_API_KEY
 
       if (!apiKey) {
         console.log('[API] エラー: APIキーがありません')
-        sendJson(res, 400, { error: 'missing_api_key', message: 'canvasApiKey is required' })
+        sendJson(res, 400, {
+          error: 'missing_api_key',
+          message: 'Canvas APIキーが設定されていません。backend/happa-cli/.env に CANVAS_API_KEY を設定してください。',
+        })
         return
       }
 
@@ -178,7 +187,7 @@ const server = http.createServer(async (req, res) => {
         maxBuffer: 1024 * 1024 * 10,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
       }
-      execFile('python', [PYTHON_SCRIPT_PATH, apiKey], execOptions, (error, stdout, stderr) => {
+      execFile(PYTHON_BIN, [PYTHON_SCRIPT_PATH, apiKey], execOptions, (error, stdout, stderr) => {
         if (error) {
           console.error('[API] Python実行エラー:', error.message)
           sendJson(res, 500, { error: 'sync_failed', message: error.message, stderr })
