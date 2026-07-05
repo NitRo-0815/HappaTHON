@@ -1,0 +1,55 @@
+.timetable-page {
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 40px 32px;
+  background: #ffffff;
+  text-align: left;
+}
+
+.timetable-page .screen-title {
+  margin: 0 0 32px;
+  font-size: 22px;
+  font-weight: 400;
+  color: #1a1a1a;
+}
+
+.timetable-wrapper {
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.timetable {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.timetable th,
+.timetable td {
+  padding: 14px 12px;
+  text-align: center;
+  border-bottom: 1px solid #ececec;
+  font-weight: 300;
+}
+
+.timetable thead th {
+  font-weight: 400;
+  color: #1a1a1a;
+  background: #f5f5f6;
+}
+
+.timetable tbody th {
+  font-weight: 400;
+  color: #1a1a1a;
+  background: #f9f9fa;
+}
+
+.timetable tbody td {
+  color: #3a3a3d;
+}
+
+.timetable tbody tr:last-child th,
+.timetable tbody tr:last-child td {
+  border-bottom: none;
+}
