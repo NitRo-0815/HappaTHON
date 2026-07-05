@@ -22,14 +22,17 @@ export function SwipeScreens({ screens, initialIndex = 0 }: SwipeScreensProps) {
   const transform = `translateX(calc(${-index * 100}% + ${dragOffset}px))`
 
   return (
-    <div className="swipe-viewport" {...touchHandlers}>
-      <div className={trackClassName} style={{ transform }}>
-        {screens.map((screen) => (
-          <div key={screen.key} className="swipe-screen">
-            {screen.content}
-          </div>
-        ))}
+    <div className="swipe-screens">
+      <div className="swipe-viewport" {...touchHandlers}>
+        <div className={trackClassName} style={{ transform }}>
+          {screens.map((screen) => (
+            <div key={screen.key} className="swipe-screen">
+              {screen.content}
+            </div>
+          ))}
+        </div>
       </div>
+      {/* overflow:hidden の影響を受けないよう、swipe-viewport の外側に配置する */}
       <ScreenArrows
         canGoPrev={canGoPrev}
         canGoNext={canGoNext}

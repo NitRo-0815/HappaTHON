@@ -1,12 +1,18 @@
 interface DaruiButtonProps {
   onClick: () => void
+  disabled?: boolean
 }
 
-// 「だるい」ボタン。現時点では通常のボタンとしてのみ機能する。
-export function DaruiButton({ onClick }: DaruiButtonProps) {
+// 入力内容をAIへ送信する主要アクションボタン
+export function DaruiButton({ onClick, disabled }: DaruiButtonProps) {
   return (
-    <button type="button" className="darui-button" onClick={onClick}>
-      だるい
+    <button
+      type="button"
+      className="darui-button"
+      onClick={onClick}
+      disabled={disabled}
+    >
+      だるい！
     </button>
   )
 }

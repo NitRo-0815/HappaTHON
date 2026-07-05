@@ -3,4 +3,5 @@ export interface HomeworkItem {
   id: string
   title: string
   deadline: string
+  description?: string
 }
