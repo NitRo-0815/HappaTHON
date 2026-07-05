@@ -2,6 +2,7 @@ import os
 import json
 import re
 import requests
+import datetime
 from bs4 import BeautifulSoup
 from canvasapi import Canvas
 from dotenv import load_dotenv
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 # 同じフォルダに配置したJSONデータベースへのパス（どこに移動しても動くように絶対パス化）
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SYLLABUS_DB_PATH = os.path.join(BASE_DIR, "all_syllabi_fast.json")
+SYLLABUS_CACHE_PATH = os.path.join(BASE_DIR, "syllabus_details_cache.json")
 
 def load_syllabus_db(path):
     try:
@@ -16,6 +18,19 @@ def load_syllabus_db(path):
             return json.load(f)
     except FileNotFoundError:
         return []
+
+def load_details_cache():
+    """一度スクレイピングしたシラバス詳細を再利用するためのキャッシュを読み込む"""
+    try:
+        with open(SYLLABUS_CACHE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_details_cache(cache):
+    """取得したシラバス詳細をキャッシュに保存する"""
+    with open(SYLLABUS_CACHE_PATH, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
 
 def extract_syllabus_details(url):
     """URLからシラバスの詳細（授業計画、ねらい、評価方法などすべて）を動的にスクレイピングして取得する"""
@@ -54,11 +69,20 @@ def get_user_tasks_with_syllabus(api_key):
     """
     canvas = Canvas(os.getenv("CANVAS_API_URL", "https://nu.instructure.com"), api_key)
     syllabus_data = load_syllabus_db(SYLLABUS_DB_PATH)
+    details_cache = load_details_cache()
+    cache_updated = False
     
     if not syllabus_data:
         raise Exception("シラバスデータベースが見つかりません。")
 
-    results = []
+    # 出力データのルート構造（3つの独立したブロック）
+    timetable = {day: {str(i): None for i in range(1, 8)} for day in "月火水木金土日"}
+    final_output = {
+        "last_updated": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timetable": timetable,
+        "syllabi": {},
+        "tasks": {}
+    }
     
     # ユーザーのコース一覧を取得
     courses = canvas.get_courses()
@@ -70,8 +94,16 @@ def get_user_tasks_with_syllabus(api_key):
             # まずそのコースに未提出の課題などがあるか確認
             assignments = list(course.get_assignments())
             if not assignments:
-                continue # 課題がないコースはAIに渡す必要がないのでスキップ
+                continue # 課題がないコースはスキップ
                 
+            # 時間割情報の抽出（例：「水3」など）
+            time_match = re.search(r'([月火水木金土日])(\d)', course_name)
+            if time_match:
+                day = time_match.group(1)
+                period = time_match.group(2)
+                if day in final_output["timetable"] and period in final_output["timetable"][day]:
+                    final_output["timetable"][day][period] = course_name
+
             # 「総合研究（〇〇）」などの場合、〇〇の部分を取り出して検索キーにする
             search_keys = [course_name]
             match = re.search(r'[（\(](.*?)[）\)]', course_name)
@@ -90,26 +122,33 @@ def get_user_tasks_with_syllabus(api_key):
                 if matched_syllabus:
                     break
 
-            course_info = {
-                "course_name": course_name,
-                "assignments": [{"name": a.name, "due_at": a.due_at} for a in assignments],
-                "syllabus": None
-            }
-
+            details = None
             if matched_syllabus:
                 url = matched_syllabus.get('url')
-                details = extract_syllabus_details(url)
+                # キャッシュにあればそれを使う。なければWebから取得してキャッシュに保存
+                if url in details_cache:
+                    details = details_cache[url]
+                else:
+                    details = extract_syllabus_details(url)
+                    if details:
+                        details_cache[url] = details
+                        cache_updated = True
+                
                 if details:
-                    # 取得したすべてのタグ情報（教科書、評価方法、ねらい等）をそのままAIに渡す
                     details["url"] = url
-                    course_info["syllabus"] = details
-            
-            results.append(course_info)
+
+            # 3つの独立したブロックにID（授業名）で紐付けて格納
+            final_output["tasks"][course_name] = [{"name": a.name, "due_at": a.due_at} for a in assignments]
+            final_output["syllabi"][course_name] = details
             
         except Exception as e:
             continue
             
-    return results
+    # 新しいシラバスを取得した場合はキャッシュファイルを保存
+    if cache_updated:
+        save_details_cache(details_cache)
+            
+    return final_output
 
 if __name__ == "__main__":
     import sys
