@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react'
 import type { ItemType } from '../types/item'
-import { getItemsByType } from '../services/itemService'
+import { getAssistantMessage, getItemsByType } from '../services/itemService'
 import { useItemSearch } from '../hooks/useItemSearch'
 import { Toolbar } from '../components/Toolbar'
 import { OutputBox } from '../components/OutputBox'
-import { DARUI_MESSAGE } from '../constants/messages'
 import '../styles/HomePage.css'
 
 // 画面全体の状態（種類・検索・出力結果）を管理するページコンポーネント
@@ -21,9 +20,20 @@ export function HomePage() {
     selectSuggestion,
   } = useItemSearch(items)
 
-  function handleDaruiClick() {
-    // TODO: 将来的にAIの応答結果へ置き換える
-    setOutputText(DARUI_MESSAGE)
+  async function handleDaruiClick() {
+    try {
+      const selectedItem = items.find((item) => item.name === query) || items[0]
+      const message = await getAssistantMessage({
+        category: type,
+        title: selectedItem?.name || '未指定',
+        feeling: 'だるい',
+        round: 1,
+        history: [],
+      })
+      setOutputText(message)
+    } catch (error) {
+      setOutputText('AI への接続に失敗しました。サーバーを起動してください。')
+    }
   }
 
   return (
