@@ -1,11 +1,31 @@
 import http from 'node:http'
-import { URL } from 'node:url'
+import { URL, fileURLToPath } from 'node:url'
+import { execFile } from 'node:child_process'
+import path from 'node:path'
 
-process.loadEnvFile()
+try {
+  process.loadEnvFile()
+} catch (e) {
+  console.log('.env file not found, using environment variables.')
+}
 
 const PORT = Number(process.env.PORT || 3001)
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'openai/gpt-4o-mini'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// Pythonスクリプトへの絶対パスを計算
+const PYTHON_SCRIPT_PATH = path.resolve(__dirname, '../../canvas_api/match_syllabi.py')
+
+// ==========================================
+// グローバルデータキャッシュ（インメモリDB）
+// ==========================================
+let globalUserData = {
+  last_updated: null,
+  timetable: null,
+  syllabi: null,
+  tasks: null
+}
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -26,12 +46,36 @@ async function getMessage({ category, title, feeling, round = 1, history = [] })
     return 'サーバーに OpenRouter の API キーが設定されていないため、応答できません。'
   }
 
+  // キャッシュからシラバスと課題を抽出してAIに渡す追加情報（プロンプト）を構築
+  let extraInfo = ''
+  if (globalUserData.syllabi && globalUserData.syllabi[title]) {
+    const syllabus = globalUserData.syllabi[title]
+    extraInfo += `\n【シラバス情報（授業の狙いなど）】\n`
+    for (const [k, v] of Object.entries(syllabus)) {
+      if (k !== 'url' && k !== '授業計画') {
+        extraInfo += `${k}: ${v}\n`
+      }
+    }
+  }
+  
+  if (globalUserData.tasks && globalUserData.tasks[title]) {
+    const tasks = globalUserData.tasks[title]
+    if (tasks.length > 0) {
+      extraInfo += `\n【未提出の課題リスト】\n`
+      tasks.forEach(t => {
+        extraInfo += `- ${t.name} (期限: ${t.due_at || '未定'})\n`
+      })
+    }
+  }
+
   const systemPrompt = `
 あなたは大学生を応援するAIです。
 ユーザーは次の状況で悩んでいます。
 種類: ${category}
 ${category === '授業' ? '授業名' : '課題名'}: ${title}
 今の気持ち: ${feeling}
+${extraInfo}
+
 あなたの目的は、無理にやる気を出させることではありません。
 
 この情報に合わせて、親しみのある自然な日本語で背中を押す一言を作成してください。
@@ -45,7 +89,7 @@ ${category === '授業' ? '授業名' : '課題名'}: ${title}
 ・少しユーモアがあってもよい
 ・毎回違う表現にする
 ・絵文字は使わない
-・授業名や課題名の内容を反映する
+・もしシラバスの目的や課題の内容があれば、それを自然に反映する
 出力はメッセージのみ。
 `
 
@@ -83,6 +127,22 @@ ${history.join('\n')}
   return data.choices?.[0]?.message?.content || '今日は一歩だけでも前に進めたら十分だよ。'
 }
 
+// リクエストボディを読み込むヘルパー関数
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', chunk => { body += chunk })
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {})
+      } catch (err) {
+        reject(err)
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
 const server = http.createServer(async (req, res) => {
   const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
 
@@ -96,35 +156,111 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (req.method === 'POST' && requestUrl.pathname === '/api/assistant') {
+  // ==========================================
+  // 1. /api/sync (Canvasデータ同期)
+  // ==========================================
+  if (req.method === 'POST' && requestUrl.pathname === '/api/sync') {
+    console.log('[API] POST /api/sync - 同期を開始します...')
     try {
-      let body = ''
-      req.on('data', (chunk) => {
-        body += chunk
-      })
+      const payload = await readBody(req)
+      const apiKey = payload.canvasApiKey
 
-      req.on('end', async () => {
+      if (!apiKey) {
+        console.log('[API] エラー: APIキーがありません')
+        sendJson(res, 400, { error: 'missing_api_key', message: 'canvasApiKey is required' })
+        return
+      }
+
+      // Pythonスクリプトを実行してJSONを取得
+      // 注意: 環境によっては 'python3' にする必要があるかもしれません
+      // Windows環境での文字化け（cp932エラー）を防ぐため PYTHONIOENCODING を明示的に設定
+      const execOptions = {
+        maxBuffer: 1024 * 1024 * 10,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
+      }
+      execFile('python', [PYTHON_SCRIPT_PATH, apiKey], execOptions, (error, stdout, stderr) => {
+        if (error) {
+          console.error('[API] Python実行エラー:', error.message)
+          sendJson(res, 500, { error: 'sync_failed', message: error.message, stderr })
+          return
+        }
+
         try {
-          const payload = body ? JSON.parse(body) : {}
-          const message = await getMessage({
-            category: payload.category,
-            title: payload.title,
-            feeling: payload.feeling,
-            round: payload.round,
-            history: payload.history || [],
-          })
+          const parsedData = JSON.parse(stdout)
+          if (parsedData.error) {
+             console.error('[API] Canvasからエラーが返りました:', parsedData.error)
+             sendJson(res, 500, { error: 'canvas_error', message: parsedData.error })
+             return
+          }
+          
+          // キャッシュを更新
+          globalUserData.last_updated = parsedData.last_updated
+          globalUserData.timetable = parsedData.timetable || {}
+          globalUserData.syllabi = parsedData.syllabi || {}
+          globalUserData.tasks = parsedData.tasks || {}
 
-          sendJson(res, 200, { message })
-        } catch (error) {
-          sendJson(res, 500, {
-            error: 'assistant_request_failed',
-            message: error instanceof Error ? error.message : 'Unknown error',
-          })
+          console.log('[API] POST /api/sync - 同期が正常に完了しました！')
+          sendJson(res, 200, { ok: true, message: 'Sync completed successfully' })
+        } catch (parseError) {
+          console.error('[API] JSONパースエラー:', parseError.message)
+          sendJson(res, 500, { error: 'invalid_json_from_python', message: parseError.message })
         }
       })
       return
     } catch (error) {
+      console.error('[API] リクエストのパースに失敗:', error.message)
       sendJson(res, 400, { error: 'invalid_json', message: 'Request body must be valid JSON.' })
+      return
+    }
+  }
+
+  // ==========================================
+  // 2. /api/timetable (時間割データの取得)
+  // ==========================================
+  if (req.method === 'GET' && requestUrl.pathname === '/api/timetable') {
+    console.log('[API] GET /api/timetable - 時間割を要求されました')
+    if (!globalUserData.timetable) {
+      sendJson(res, 404, { error: 'not_synced', message: 'データが同期されていません。/api/sync を実行してください。' })
+      return
+    }
+    sendJson(res, 200, globalUserData.timetable)
+    return
+  }
+
+  // ==========================================
+  // 3. /api/tasks (課題リストの取得)
+  // ==========================================
+  if (req.method === 'GET' && requestUrl.pathname === '/api/tasks') {
+    console.log('[API] GET /api/tasks - 課題リストを要求されました')
+    if (!globalUserData.tasks) {
+      sendJson(res, 404, { error: 'not_synced', message: 'データが同期されていません。/api/sync を実行してください。' })
+      return
+    }
+    sendJson(res, 200, globalUserData.tasks)
+    return
+  }
+
+  // ==========================================
+  // 4. /api/assistant (チャット機能)
+  // ==========================================
+  if (req.method === 'POST' && requestUrl.pathname === '/api/assistant') {
+    console.log('[API] POST /api/assistant - AIにリクエストを送信中...')
+    try {
+      const payload = await readBody(req)
+      const message = await getMessage({
+        category: payload.category,
+        title: payload.title,
+        feeling: payload.feeling,
+        round: payload.round,
+        history: payload.history || [],
+      })
+
+      console.log('[API] POST /api/assistant - AIから返答がありました！')
+      sendJson(res, 200, { message })
+      return
+    } catch (error) {
+      console.error('[API] AIリクエストエラー:', error.message)
+      sendJson(res, 400, { error: 'invalid_json', message: error.message || 'Request body must be valid JSON.' })
       return
     }
   }
