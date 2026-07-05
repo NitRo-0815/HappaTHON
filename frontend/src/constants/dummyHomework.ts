@@ -1,0 +1,7 @@
+import type { HomeworkItem } from '../types/homework'
+
+// 宿題リストのダミーデータ（バックエンド未実装のため仮データとして保持）
+export const HOMEWORK_LIST: HomeworkItem[] = [
+  { id: 'hw-1', title: '線形代数レポート', deadline: '2026-07-10' },
+  { id: 'hw-2', title: '英語課題', deadline: '2026-07-12' },
+]

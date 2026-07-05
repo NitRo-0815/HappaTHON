@@ -1,54 +1,90 @@
-import { useMemo, useState } from 'react'
-import type { ItemType } from '../types/item'
-import { getAssistantMessage, getItemsByType } from '../services/itemService'
-import { useItemSearch } from '../hooks/useItemSearch'
-import { Toolbar } from '../components/Toolbar'
-import { OutputBox } from '../components/OutputBox'
+import { useState } from 'react'
+import { getAssistantMessage } from '../services/itemService'
+import { useAgentInput } from '../hooks/useAgentInput'
+import { AgentPanel } from '../components/AgentPanel'
+import { ChatPanel } from '../components/ChatPanel'
+import type { ChatMessage } from '../types/chatMessage'
 import '../styles/HomePage.css'
 
-// 画面全体の状態（種類・検索・出力結果）を管理するページコンポーネント
-export function HomePage() {
-  const [type, setType] = useState<ItemType>('授業')
-  const [outputText, setOutputText] = useState('')
+const WELCOME_MESSAGE: ChatMessage = {
+  id: 'welcome',
+  role: 'assistant',
+  text: '今日はどれがだるいですか？宿題か授業を選んで教えてください。',
+}
 
-  const items = useMemo(() => getItemsByType(type), [type])
+// 中央画面：エージェントとの対話画面（左＝入力操作、右＝チャット履歴）
+export function HomePage() {
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE])
+  const [isSending, setIsSending] = useState(false)
+
   const {
+    type,
+    effectiveType,
     query,
     suggestions,
     isSuggestionOpen,
     handleQueryChange,
+    selectType,
     selectSuggestion,
-  } = useItemSearch(items)
+    openSuggestions,
+    clearQuery,
+  } = useAgentInput()
 
-  async function handleDaruiClick() {
+  async function handleSend() {
+    if (isSending) return
+
+    const title = query.trim() || '未指定'
+    const history = messages.map((message) => message.text)
+    const round = messages.filter((message) => message.role === 'user').length + 1
+
+    setMessages((current) => [
+      ...current,
+      { id: `user-${Date.now()}`, role: 'user', text: `${title}、だるい…` },
+    ])
+    clearQuery()
+    setIsSending(true)
+
     try {
-      const selectedItem = items.find((item) => item.name === query) || items[0]
-      const message = await getAssistantMessage({
-        category: type,
-        title: selectedItem?.name || '未指定',
+      const reply = await getAssistantMessage({
+        category: effectiveType,
+        title,
         feeling: 'だるい',
-        round: 1,
-        history: [],
+        round,
+        history,
       })
-      setOutputText(message)
-    } catch (error) {
-      setOutputText('AI への接続に失敗しました。サーバーを起動してください。')
+      setMessages((current) => [
+        ...current,
+        { id: `assistant-${Date.now()}`, role: 'assistant', text: reply },
+      ])
+    } catch {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          text: 'AI への接続に失敗しました。サーバーを起動してください。',
+        },
+      ])
+    } finally {
+      setIsSending(false)
     }
   }
 
   return (
-    <main className="home-page">
-      <Toolbar
+    <div className="agent-screen">
+      <AgentPanel
         type={type}
-        onTypeChange={setType}
+        onTypeChange={selectType}
         query={query}
         onQueryChange={handleQueryChange}
+        onFocusInput={openSuggestions}
         suggestions={suggestions}
         isSuggestionOpen={isSuggestionOpen}
         onSelectSuggestion={selectSuggestion}
-        onDaruiClick={handleDaruiClick}
+        onSend={handleSend}
+        isSending={isSending}
       />
-      <OutputBox text={outputText} />
-    </main>
+      <ChatPanel messages={messages} />
+    </div>
   )
 }
